@@ -14,7 +14,4 @@ license = "MIT"
 
 [dependencies]
 log = "0.4.0"
-
-[dependencies.glib-sys]
-version = ""
-features = ["v2_44"]
+glib-sys = { version = "0.9.1", features = ["v2_44"] }
