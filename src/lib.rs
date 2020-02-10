@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 //! A simple logger that integrates with [glib message
-//! logging][https://developer.gnome.org/glib/unstable/glib-Message-Logging.html]
+//! logging](https://developer.gnome.org/glib/unstable/glib-Message-Logging.html)
 //! mechanism. The logger is useful when one wants to integrate a piece of Rust
 //! code into a larger application which is already using glib/gio stack.
 //!
