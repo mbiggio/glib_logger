@@ -89,16 +89,37 @@
 
 use log::{Level, Metadata, Record};
 
+#[derive(Debug, Copy, Clone)]
+pub enum LoggerType {
+    Simple,
+    SimplePlain,
+    Structured,
+}
+
 pub struct Logger {
-    structured: bool,
+    logger_type: LoggerType,
+    domain: Option<&'static str>,
 }
 
 pub const fn simple() -> Logger {
-    Logger { structured: false }
+    Logger {
+        logger_type: LoggerType::Simple,
+        domain: None,
+    }
 }
 
 pub const fn structured() -> Logger {
-    Logger { structured: true }
+    Logger {
+        logger_type: LoggerType::Structured,
+        domain: None,
+    }
+}
+
+pub const fn custom(logger_type: LoggerType, domain: Option<&'static str>) -> Logger {
+    Logger {
+        logger_type,
+        domain,
+    }
 }
 
 trait ToGlib {
@@ -122,18 +143,27 @@ impl ToGlib for log::Level {
     }
 }
 
-fn glib_log_structured(level: log::Level, file: &str, line: &str, func: &str, message: &str) {
+fn glib_log_structured(domain: Option<&str>, level: log::Level, file: &str, line: &str, func: &str, message: &str) {
     use glib_sys::g_log_structured_standard;
     use std::ffi::CString;
     use std::ptr;
-    println!("file: {}", file);
+
     let c_file = CString::new(file).expect("CString::new(file) failed");
     let c_line = CString::new(line).expect("CString::new(line) failed");
     let c_func = CString::new(func).expect("CString::new(func) failed");
     let c_message = CString::new(message).expect("CString::new(message) failed");
+
+    let c_domain_ptr = match domain {
+        None => ptr::null(),
+        Some(s) => match CString::new(s) {
+            Ok(s) => s.as_ptr(),
+            Err(_) => ptr::null(),
+        },
+    };
+
     unsafe {
         g_log_structured_standard(
-            ptr::null(),
+            c_domain_ptr,
             level.to_glib(),
             c_file.as_ptr(),
             c_line.as_ptr(),
@@ -143,13 +173,24 @@ fn glib_log_structured(level: log::Level, file: &str, line: &str, func: &str, me
     }
 }
 
-fn glib_log(level: log::Level, message: &str) {
+fn glib_log(domain: Option<&str>, level: log::Level, message: &str) {
     use glib_sys::g_log;
     use std::ffi::CString;
     use std::ptr;
     let c_message = CString::new(message).expect("CString::new(message) failed");
+
+    let c_domain = match domain {
+        None => None,
+        Some(s) => Some(CString::new(s).expect("CString::new(domain) failed")),
+    };
+
+    let c_domain_ptr = match &c_domain {
+        None => ptr::null(),
+        Some(s) => s.as_ptr(),
+    };
+
     unsafe {
-        g_log(ptr::null(), level.to_glib(), c_message.as_ptr());
+        g_log(c_domain_ptr, level.to_glib(), c_message.as_ptr());
     }
 }
 
@@ -164,19 +205,28 @@ impl log::Log for Logger {
         }
         let file = record.file().expect("no file in record");
         let line = &record.line().expect("no line in record").to_string();
-        if !self.structured {
-            let s = format!("{}:{}: {}", file, line, record.args());
-            glib_log(record.level(), &s);
-        } else {
-            let s = format!("{}", record.args());
-            glib_log_structured(
-                record.level(),
-                file,
-                line,
-                record.module_path().expect("no module"),
-                &s,
-            );
-        }
+
+        match self.logger_type {
+            LoggerType::Simple => {
+                let s = format!("{}:{}: {}", file, line, record.args());
+                glib_log(self.domain, record.level(), &s);
+            },
+            LoggerType::SimplePlain => {
+                let s = format!("{}", record.args());
+                glib_log(self.domain, record.level(), &s)
+            },
+            LoggerType::Structured => {
+                let s = format!("{}", record.args());
+                glib_log_structured(
+                    self.domain,
+                    record.level(),
+                    file,
+                    line,
+                    record.module_path().expect("no module"),
+                    &s,
+                );
+            },
+        };
     }
 
     fn flush(&self) {}
@@ -188,6 +238,8 @@ pub static SIMPLE: Logger = simple();
 // Structured logger (Experimental).
 pub static STRUCTURED: Logger = structured();
 
+pub static CUSTOM: Logger = custom(LoggerType::Structured, Some("AHAHAH"));
+
 // Set up given logger.
 pub fn init(logger: &'static Logger) {
     log::set_logger(logger).expect("glib_logger::init failed to initialize");
@@ -197,6 +249,7 @@ pub fn init(logger: &'static Logger) {
 mod tests {
     use log::Level;
     use std::os::raw::c_char;
+    use serial_test::serial;
 
     struct LogTrace {
         domain: Option<String>,
@@ -219,7 +272,6 @@ mod tests {
         use std::ffi::c_void;
         use std::ptr;
 
-        // let mut trace = Box::new(LogTrace::new());
         let mut trace = LogTrace::new();
         let prev_handler: glib_sys::GLogFunc;
 
@@ -255,14 +307,13 @@ mod tests {
             trace.domain = Some(CStr::from_ptr(domain_ptr).to_string_lossy().into_owned());
         }
         trace.level = Some(level);
-
-        println!("log writer");
     }
 
     #[test]
+    #[serial]
     fn simple_log() {
         let trace = collect_log(|| {
-            super::glib_log(Level::Debug, "foobar");
+            super::glib_log(None, Level::Debug, "foobar");
         });
         assert_eq!(trace.domain, None);
         assert_eq!(trace.message, Some("foobar".to_string()));
@@ -270,9 +321,22 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn domain_log() {
+        let trace = collect_log(|| {
+            super::glib_log(Some("barbaz"), Level::Debug, "foobar");
+        });
+        assert_eq!(trace.domain, Some(String::from("barbaz")));
+        assert_eq!(trace.message, Some("foobar".to_string()));
+        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_DEBUG));
+    }
+
+    #[test]
+    #[serial]
     fn simple_formatted_log() {
         let trace = collect_log(|| {
             super::glib_log(
+                None,
                 Level::Info,
                 &format!("this is a test {} \"{}\" %%d", 123, "abcd"),
             );
@@ -288,6 +352,7 @@ mod tests {
     // TODO: figure out a way to install handler for structure logs
 
     #[test]
+    #[serial]
     fn via_logger() {
         let trace = collect_log(|| {
             use log::Log;
