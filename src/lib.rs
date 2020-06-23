@@ -238,8 +238,6 @@ pub static SIMPLE: Logger = simple();
 // Structured logger (Experimental).
 pub static STRUCTURED: Logger = structured();
 
-pub static CUSTOM: Logger = custom(LoggerType::Structured, Some("AHAHAH"));
-
 // Set up given logger.
 pub fn init(logger: &'static Logger) {
     log::set_logger(logger).expect("glib_logger::init failed to initialize");

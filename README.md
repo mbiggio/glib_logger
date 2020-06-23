@@ -63,4 +63,5 @@ done in Glib. It is advisable to set `G_MESSAGES_DEBUG=all` environment variable
 
 Using Glib a domain can be set per file by using `#define G_LOG_DOMAIN
 "my-domain"` directly in C code. This functionality is not avaialble when using
-`glib_logger`, all logs are emitted with a NULL domain.
+`glib_logger` default loggers. To reproduce this functionality, create a custom
+logger using `pub static CUSTOM: Logger = custom(LoggerType::Structured, Some("my-domain"));`.
