@@ -14,7 +14,11 @@ license = "MIT"
 
 [dependencies]
 log = "0.4.0"
-glib-sys = { version = "0.9.1", features = ["v2_44"] }
 
 [dev-dependencies]
 serial_test = "0.4.0"
+
+[dependencies.glib-sys]
+git = "https://github.com/gtk-rs/sys"
+package = "glib-sys"
+features = ["v2_64"]
