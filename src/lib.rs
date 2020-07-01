@@ -87,6 +87,9 @@
 //! "my-domain"` directly in C code. This functionality is not avaialble when using
 //! `glib_logger`, all logs are emitted with a NULL domain.
 
+#[macro_use]
+extern crate log;
+
 use log::{Level, Metadata, Record};
 
 #[derive(Debug, Copy, Clone)]
@@ -98,27 +101,35 @@ pub enum LoggerType {
 
 pub struct Logger {
     logger_type: LoggerType,
-    domain: Option<&'static str>,
+    default_domain: Option<&'static str>,
+    target_overrides_domain: bool,
 }
 
 pub const fn simple() -> Logger {
     Logger {
         logger_type: LoggerType::Simple,
-        domain: None,
+        default_domain: None,
+        target_overrides_domain: true,
     }
 }
 
 pub const fn structured() -> Logger {
     Logger {
         logger_type: LoggerType::Structured,
-        domain: None,
+        default_domain: None,
+        target_overrides_domain: true,
     }
 }
 
-pub const fn custom(logger_type: LoggerType, domain: Option<&'static str>) -> Logger {
+pub const fn custom(
+    logger_type: LoggerType,
+    default_domain: Option<&'static str>,
+    target_overrides_domain: bool
+) -> Logger {
     Logger {
         logger_type,
-        domain,
+        default_domain,
+        target_overrides_domain,
     }
 }
 
@@ -206,19 +217,25 @@ impl log::Log for Logger {
         let file = record.file().expect("no file in record");
         let line = &record.line().expect("no line in record").to_string();
 
+        let domain = if self.target_overrides_domain && record.metadata().target() != "" {
+            Some(record.metadata().target())
+        } else {
+            self.default_domain
+        };
+
         match self.logger_type {
             LoggerType::Simple => {
                 let s = format!("{}:{}: {}", file, line, record.args());
-                glib_log(self.domain, record.level(), &s);
+                glib_log(domain, record.level(), &s);
             },
             LoggerType::SimplePlain => {
                 let s = format!("{}", record.args());
-                glib_log(self.domain, record.level(), &s)
+                glib_log(domain, record.level(), &s)
             },
             LoggerType::Structured => {
                 let s = format!("{}", record.args());
                 glib_log_structured(
-                    self.domain,
+                    domain,
                     record.level(),
                     file,
                     line,
@@ -243,11 +260,50 @@ pub fn init(logger: &'static Logger) {
     log::set_logger(logger).expect("glib_logger::init failed to initialize");
 }
 
+pub fn try_init(logger: &'static Logger) -> Result<(), log::SetLoggerError> {
+    log::set_logger(logger)
+}
+
 #[cfg(test)]
 mod tests {
     use log::Level;
     use std::os::raw::c_char;
     use serial_test::serial;
+
+    static TEST_LOGGER: InterchangableLoggerWrap = InterchangableLoggerWrap { 
+        wrapped_logger: std::cell::Cell::new(None)
+    };
+
+    struct InterchangableLoggerWrap {
+        wrapped_logger: std::cell::Cell<Option<&'static dyn log::Log>>,
+    }
+
+    impl InterchangableLoggerWrap {
+        pub fn set_wrapped_logger(&self, wrapped_logger: &'static dyn log::Log) {
+            self.wrapped_logger.set(Some(wrapped_logger));
+        }
+
+        pub fn clear_wrapped_logger(&self) {
+            self.wrapped_logger.set(None);
+        }
+    }
+
+    unsafe impl Send for InterchangableLoggerWrap {}
+    unsafe impl Sync for InterchangableLoggerWrap {}
+
+    impl log::Log for InterchangableLoggerWrap {
+        fn enabled(&self, _metadata: &log::Metadata) -> bool {
+            self.wrapped_logger.get().is_some()
+        }
+
+        fn log(&self, record: &log::Record) {
+            if let Some(logger) = self.wrapped_logger.get() {
+                logger.log(record);
+            }
+        }
+
+        fn flush(&self) {}
+    }
 
     struct LogTrace {
         domain: Option<String>,
@@ -307,6 +363,11 @@ mod tests {
         trace.level = Some(level);
     }
 
+    fn init_test_logger() {
+        let _ = log::set_logger(&TEST_LOGGER);
+        log::set_max_level(log::LevelFilter::Debug);
+    }
+
     #[test]
     #[serial]
     fn simple_log() {
@@ -328,6 +389,7 @@ mod tests {
         assert_eq!(trace.message, Some("foobar".to_string()));
         assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_DEBUG));
     }
+
 
     #[test]
     #[serial]
@@ -370,5 +432,56 @@ mod tests {
             Some("foo.rs:123: this is a test \"abcd\" 12".to_string())
         );
         assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_CRITICAL));
+    }
+
+    #[test]
+    #[serial]
+    fn via_macro() {
+        static THIS_LOGGER: crate::Logger = crate::custom(crate::LoggerType::SimplePlain, None, false);
+        init_test_logger();
+        TEST_LOGGER.set_wrapped_logger(&THIS_LOGGER);
+
+        let trace = collect_log(|| {
+            warn!("foobar");
+        });
+        assert_eq!(trace.domain, None);
+        assert_eq!(trace.message, Some("foobar".to_string()));
+        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_WARNING));
+
+        TEST_LOGGER.clear_wrapped_logger();
+    }
+
+    #[test]
+    #[serial]
+    fn via_macro_domain_default() {
+        static THIS_LOGGER: crate::Logger = crate::custom(crate::LoggerType::SimplePlain, Some("barbaz"), false);
+        init_test_logger();
+        TEST_LOGGER.set_wrapped_logger(&THIS_LOGGER);
+
+        let trace = collect_log(|| {
+            warn!("foobar");
+        });
+        assert_eq!(trace.domain, Some("barbaz".to_string()));
+        assert_eq!(trace.message, Some("foobar".to_string()));
+        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_WARNING));
+
+        TEST_LOGGER.clear_wrapped_logger();
+    }
+
+    #[test]
+    #[serial]
+    fn via_macro_domain_override() {
+        static THIS_LOGGER: crate::Logger = crate::custom(crate::LoggerType::SimplePlain, Some("barbaz"), true);
+        init_test_logger();
+        TEST_LOGGER.set_wrapped_logger(&THIS_LOGGER);
+
+        let trace = collect_log(|| {
+            warn!(target: "notbarbaz", "foobar");
+        });
+        assert_eq!(trace.domain, Some("notbarbaz".to_string()));
+        assert_eq!(trace.message, Some("foobar".to_string()));
+        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_WARNING));
+
+        TEST_LOGGER.clear_wrapped_logger();
     }
 }
