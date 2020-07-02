@@ -23,13 +23,15 @@
 //! A simple logger that integrates with [glib message
 //! logging](https://developer.gnome.org/glib/unstable/glib-Message-Logging.html)
 //! mechanism. The logger is useful when one wants to integrate a piece of Rust
-//! code into a larger application which is already using glib/gio stack.
+//! code into a larger application which is already using the glib/gio stack, or
+//! for Rust applications and libraries using gtk-rs or similar infrastructure.
 //!
-//! ### Example
+//! ### Simplest example
 //!
-//! ```
+//! ```ignore
 //! use std::env;
 //!
+//! #[macro_use]
 //! use log;
 //!
 //! fn main() {
@@ -38,14 +40,14 @@
 //!     glib_logger::init(&glib_logger::SIMPLE);
 //!     log::set_max_level(log::LevelFilter::Debug);
 //!
-//!     log::info!("info message: {}", 2);
-//!     log::warn!("warning message: {}", "foobar");
-//!     log::debug!("Hello, world!");
+//!     info!("info message: {}", 2);
+//!     warn!("warning message: {}", "foobar");
+//!     debug!("Hello, world!");
 //! }
 //! ```
 //!
 //! Equivalent Vala code:
-
+//!
 //! ```vala
 //! public void main() {
 //!     Environment.set_variable ("G_MESSAGES_DEBUG", "all", false);
@@ -57,7 +59,7 @@
 //! ```
 //!
 //! Running:
-
+//!
 //! ```bash
 //! $ ./glib_logger_test
 //! ** INFO: 20:18:34.074: src/main.rs:12: info message: 2
@@ -66,7 +68,61 @@
 //! ** (process:39403): DEBUG: 20:18:34.076: src/main.rs:15: Hello, world!
 //! ```
 //!
-//! ### Details
+//! ### Examples
+//!
+//! The crate provides a series of examples in the `examples/` subdir.
+//!
+//! - simple.rs : The simplest usage example possible, zero customization.
+//! - simple_domain.rs : How to use a simple, custom glib log domain.
+//! - target_domain.rs : How to map the Rust log target to the glib log domain.
+//! - g_macro_domain.rs : How to use macros to have the glib log domain specified
+//!     in `G_LOG_DOMAIN`.
+//! - override_macro_domain.rs : How to use the optional feature to remap the
+//!     g_trace etc. macros over the standard log macro names
+//! - custom_log_function.rs : How to specify a custom log function using
+//!     the `glib_sys` crate.
+//!
+//!
+//! ### Logger types
+//!
+//! The crate makes two logger types available, plus the functionality to build a
+//! custom logger.
+//!
+//! The two predefined logger types are:
+//!
+//! - `glib_logger::SIMPLE`: a simple logger which prints the message, decorated
+//!     with file and line number, without a domain
+//!
+//! - `glib_logger::STRUCTURED`: an experimental logger using glib structured
+//!     logging capabilities
+//!
+//! Custom loggers can be defined with `glib_logger::custom`, specifying both how
+//! the message is composed and how the logging domain is composed.
+//!
+//! `LoggerType` can be:
+//!
+//! - `LoggerType::Simple`: a simple logger which prints the message, decorated
+//!     with file and line number
+//!
+//! - `LoggerType::SimplePlain`: a simple logger which prints the message, without
+//!     decorating the message with file and line number
+//!
+//! - `LoggerType::Structured`: an experimental logger using glib structured
+//!     logging capabilities
+//!
+//! `LoggerDomain` can be:
+//!
+//! - `LoggerDomain::None`: a logger which uses an empty domain
+//!
+//! - `LoggerDomain::Custom(&'static str)`: a logger using a predefined domain; note
+//!     that the domain would then be the same across all Rust crates
+//!
+//! - `LoggerDomain::Context`: a logger using the logging context of the `log` crate
+//!     as the glib logging domain
+//!
+//! See the domain section for further details.
+//!
+//! ### Log levels
 //!
 //! Due to slight differences between the meaning of respective log levels, the
 //! crate takes certain liberties. Specifically the log level mappings are:
@@ -80,408 +136,166 @@
 //! any of `log::Level` enum values. The reason is that `g_error()` is fatal, while
 //! `log::error!()` is not.
 //!
-//! The formatting is done fully in Rust. However, log filtering based on level is
-//! done in Glib. It is advisable to set `G_MESSAGES_DEBUG=all` environment variable.
+//! The formatting is done fully in Rust. Log filtering based on level is done in
+//! both Glib and the Rust `log` crate.
+//!
+//! It is advisable to set `G_MESSAGES_DEBUG=all` environment variable if a custom
+//! glib log handler is not used, to set the glib logger to debug level.
+//!
+//! Additionally log level will be filtered also by the `log` crate in Rust itself;
+//! so to enable lower level of logs you might need to set the log level explicitely
+//! using calls similar to `log::set_max_level(log::LevelFilter::Debug);`.
+//!
+//! ### Domain
 //!
 //! Using Glib a domain can be set per file by using `#define G_LOG_DOMAIN
-//! "my-domain"` directly in C code. This functionality is not avaialble when using
-//! `glib_logger`, all logs are emitted with a NULL domain.
+//! "my-domain"` directly in C code.
+//!
+//! This functionality is not available by default when using the predefined
+//! `glib_logger` loggers, so a custom logger must be created using the `custom`
+//! function.
+//!
+//! The closest option to get this functionality is using a custom logger with
+//! LoggerDomain set as `LoggerDomain::Target`.
+//!
+//! This example shows how to use the target to set the domain using standard Rust
+//! log functions:
+//!
+//! ```ignore
+//! // initialize a static custom logger
+//! static CUSTOM: Logger = custom(LoggerType::Simple, LoggerDomain::Target);
+//! // set the logger as active
+//! glib_logger::init(&CUSTOM);
+//! // implicit; will use the current crate/file as domain
+//! warn!("some log message");
+//! // explicit; will use the "my-domain" string as a domain
+//! warn!(target: "my-domain", "some log message");
+//! ```
+//!
+//! Alternatively, you can use macros and `G_LOG_DOMAIN` in the same vein of glib
+//! to support the domain functionality:
+//!
+//! ```ignore
+//! // See the "g_macro_domain" example for a more extensive usage example.
+//! #[macro_use]
+//! extern crate glib_logger;
+//! static G_LOG_DOMAIN: &str = "my-global-domain";
+//! static CUSTOM: Logger = custom(LoggerType::Simple, LoggerDomain::Target);
+//! // ...
+//! // set the logger as active
+//! glib_logger::init(&CUSTOM);
+//! // implicit; will use the domain in G_LOG_DOMAIN
+//! g_warn!("some log message");
+//! // explicit; will use the "my-domain" string as a domain
+//! g_warn!(target: "my-domain", "some log message");
+//! ```
+//!
+//! Finally, you can use macros in the same vein of glib ones to support the
+//! domain functionality:
+//!
+//! ```ignore
+//! // This requires the "redefine_log_macros" to be enabled in Cargo.toml.
+//! // See the "override_macro_domain" example for a more extensive usage example.
+//! #[macro_use]
+//! extern crate glib_logger;
+//! static G_LOG_DOMAIN: &str = "my-global-domain";
+//! static CUSTOM: Logger = custom(LoggerType::Simple, LoggerDomain::Target);
+//! // ...
+//! // set the logger as active
+//! glib_logger::init(&CUSTOM);
+//! // implicit; will use the domain in G_LOG_DOMAIN
+//! warn!("some log message");
+//! // explicit; will use the "my-domain" string as a domain
+//! warn!(target: "my-domain", "some log message");
+//! ```
+
+mod logging;
 
 #[macro_use]
-extern crate log;
+mod domain_macros;
 
-use log::{Level, Metadata, Record};
+#[macro_use]
+#[cfg(any(test, feature = "redefine_log_macros"))]
+mod redefined_log_macros;
 
+#[cfg(test)]
+mod tests;
+
+
+/// The possible message composition behaviors
 #[derive(Debug, Copy, Clone)]
 pub enum LoggerType {
+    /// A simple logger, writing file, line and message on output
     Simple,
+    /// A simple logger, writing only message on output
     SimplePlain,
+    /// An experimental logger using glib structured logging
     Structured,
 }
 
-pub struct Logger {
-    logger_type: LoggerType,
-    default_domain: Option<&'static str>,
-    target_overrides_domain: bool,
+/// The possible domain handling behaviors
+pub enum LoggerDomain {
+    /// Logs will have no domain specified
+    None,
+    /// Logs will have a custom predefined domain specified
+    Custom(&'static str),
+    /// Logs will use the `target` of the log crate as a domain
+    Target,
 }
 
+/// The logger object which will be used.
+/// Use `init` or `try_init` to set a logger object as
+/// the current logger.
+pub struct Logger {
+    logger_type: LoggerType,
+    domain: LoggerDomain,
+}
+
+/// A function returning a preinitialized simple logger.
+/// Usage of the predefined `SIMPLE` static is recommended.
 pub const fn simple() -> Logger {
     Logger {
         logger_type: LoggerType::Simple,
-        default_domain: None,
-        target_overrides_domain: true,
+        domain: LoggerDomain::None,
     }
 }
 
+/// A function returning a preinitialized structured logger.
+/// Usage of the predefined `STRUCTURED` static is recommended.
+/// Note: support for structured loggers is experimental.
 pub const fn structured() -> Logger {
     Logger {
         logger_type: LoggerType::Structured,
-        default_domain: None,
-        target_overrides_domain: true,
+        domain: LoggerDomain::None,
     }
 }
 
-pub const fn custom(
-    logger_type: LoggerType,
-    default_domain: Option<&'static str>,
-    target_overrides_domain: bool
-) -> Logger {
+/// A function returning a custom logger, allowing the caller to
+/// specify `LoggerType` and `LoggerDomain`.
+/// The return value of this should be store in a static variable.
+pub const fn custom(logger_type: LoggerType, domain: LoggerDomain) -> Logger {
     Logger {
         logger_type,
-        default_domain,
-        target_overrides_domain,
+        domain,
     }
 }
 
-trait ToGlib {
-    type GlibType;
-
-    fn to_glib(&self) -> Self::GlibType;
-}
-
-impl ToGlib for log::Level {
-    type GlibType = glib_sys::GLogLevelFlags;
-
-    fn to_glib(&self) -> glib_sys::GLogLevelFlags {
-        match *self {
-            Level::Debug => glib_sys::G_LOG_LEVEL_DEBUG,
-            Level::Info => glib_sys::G_LOG_LEVEL_INFO,
-            Level::Warn => glib_sys::G_LOG_LEVEL_WARNING,
-            Level::Trace => glib_sys::G_LOG_LEVEL_DEBUG,
-            // cannot use G_LOG_LEVEL_ERROR as those are always fatal
-            Level::Error => glib_sys::G_LOG_LEVEL_CRITICAL,
-        }
-    }
-}
-
-fn glib_log_structured(domain: Option<&str>, level: log::Level, file: &str, line: &str, func: &str, message: &str) {
-    use glib_sys::g_log_structured_standard;
-    use std::ffi::CString;
-    use std::ptr;
-
-    let c_file = CString::new(file).expect("CString::new(file) failed");
-    let c_line = CString::new(line).expect("CString::new(line) failed");
-    let c_func = CString::new(func).expect("CString::new(func) failed");
-    let c_message = CString::new(message).expect("CString::new(message) failed");
-
-    let c_domain_ptr = match domain {
-        None => ptr::null(),
-        Some(s) => match CString::new(s) {
-            Ok(s) => s.as_ptr(),
-            Err(_) => ptr::null(),
-        },
-    };
-
-    unsafe {
-        g_log_structured_standard(
-            c_domain_ptr,
-            level.to_glib(),
-            c_file.as_ptr(),
-            c_line.as_ptr(),
-            c_func.as_ptr(),
-            c_message.as_ptr(),
-        );
-    }
-}
-
-fn glib_log(domain: Option<&str>, level: log::Level, message: &str) {
-    use glib_sys::g_log;
-    use std::ffi::CString;
-    use std::ptr;
-    let c_message = CString::new(message).expect("CString::new(message) failed");
-
-    let c_domain = match domain {
-        None => None,
-        Some(s) => Some(CString::new(s).expect("CString::new(domain) failed")),
-    };
-
-    let c_domain_ptr = match &c_domain {
-        None => ptr::null(),
-        Some(s) => s.as_ptr(),
-    };
-
-    unsafe {
-        g_log(c_domain_ptr, level.to_glib(), c_message.as_ptr());
-    }
-}
-
-impl log::Log for Logger {
-    fn enabled(&self, _metadata: &Metadata) -> bool {
-        true
-    }
-
-    fn log(&self, record: &Record) {
-        if !self.enabled(record.metadata()) {
-            return;
-        }
-        let file = record.file().expect("no file in record");
-        let line = &record.line().expect("no line in record").to_string();
-
-        let domain = if self.target_overrides_domain && record.metadata().target() != "" {
-            Some(record.metadata().target())
-        } else {
-            self.default_domain
-        };
-
-        match self.logger_type {
-            LoggerType::Simple => {
-                let s = format!("{}:{}: {}", file, line, record.args());
-                glib_log(domain, record.level(), &s);
-            },
-            LoggerType::SimplePlain => {
-                let s = format!("{}", record.args());
-                glib_log(domain, record.level(), &s)
-            },
-            LoggerType::Structured => {
-                let s = format!("{}", record.args());
-                glib_log_structured(
-                    domain,
-                    record.level(),
-                    file,
-                    line,
-                    record.module_path().expect("no module"),
-                    &s,
-                );
-            },
-        };
-    }
-
-    fn flush(&self) {}
-}
-
-// Simple logger.
+/// A predefined static contained a preinitialized simple logger.
 pub static SIMPLE: Logger = simple();
 
-// Structured logger (Experimental).
+/// A predefined static contained a preinitialized structured
+/// logger
+/// Note: support for structured loggers is experimental.
 pub static STRUCTURED: Logger = structured();
 
-// Set up given logger.
+/// Sets up given logger as the active logger. If a logger is
+/// already initialized, this will panic.
 pub fn init(logger: &'static Logger) {
-    log::set_logger(logger).expect("glib_logger::init failed to initialize");
+    try_init(logger).expect("glib_logger::init failed to initialize");
 }
 
+/// Sets up given logger as the active logger. If a logger is
+/// already initialized, this will return a `log::SetLoggerError`.
 pub fn try_init(logger: &'static Logger) -> Result<(), log::SetLoggerError> {
-    log::set_logger(logger)
-}
-
-#[cfg(test)]
-mod tests {
-    use log::Level;
-    use std::os::raw::c_char;
-    use serial_test::serial;
-
-    static TEST_LOGGER: InterchangableLoggerWrap = InterchangableLoggerWrap { 
-        wrapped_logger: std::cell::Cell::new(None)
-    };
-
-    struct InterchangableLoggerWrap {
-        wrapped_logger: std::cell::Cell<Option<&'static dyn log::Log>>,
-    }
-
-    impl InterchangableLoggerWrap {
-        pub fn set_wrapped_logger(&self, wrapped_logger: &'static dyn log::Log) {
-            self.wrapped_logger.set(Some(wrapped_logger));
-        }
-
-        pub fn clear_wrapped_logger(&self) {
-            self.wrapped_logger.set(None);
-        }
-    }
-
-    unsafe impl Send for InterchangableLoggerWrap {}
-    unsafe impl Sync for InterchangableLoggerWrap {}
-
-    impl log::Log for InterchangableLoggerWrap {
-        fn enabled(&self, _metadata: &log::Metadata) -> bool {
-            self.wrapped_logger.get().is_some()
-        }
-
-        fn log(&self, record: &log::Record) {
-            if let Some(logger) = self.wrapped_logger.get() {
-                logger.log(record);
-            }
-        }
-
-        fn flush(&self) {}
-    }
-
-    struct LogTrace {
-        domain: Option<String>,
-        level: Option<glib_sys::GLogLevelFlags>,
-        message: Option<String>,
-    }
-
-    impl LogTrace {
-        fn new() -> LogTrace {
-            LogTrace {
-                domain: None,
-                level: None,
-                message: None,
-            }
-        }
-    }
-
-    fn collect_log(test_case: fn()) -> LogTrace {
-        use glib_sys::g_log_set_default_handler;
-        use std::ffi::c_void;
-        use std::ptr;
-
-        let mut trace = LogTrace::new();
-        let prev_handler: glib_sys::GLogFunc;
-
-        unsafe {
-            prev_handler =
-                g_log_set_default_handler(Some(log_writer), &mut trace as *mut _ as *mut c_void);
-        }
-        test_case();
-        unsafe {
-            g_log_set_default_handler(prev_handler, ptr::null_mut());
-        }
-
-        trace
-    }
-
-    unsafe extern "C" fn log_writer(
-        domain_ptr: *const c_char,
-        level: glib_sys::GLogLevelFlags,
-        message_ptr: *const c_char,
-        data_ptr: glib_sys::gpointer,
-    ) {
-        use std::ffi::CStr;
-
-        if data_ptr.is_null() {
-            panic!("own data is NULL");
-        }
-        let trace: &mut LogTrace = &mut *(data_ptr as *mut LogTrace);
-
-        if !message_ptr.is_null() {
-            trace.message = Some(CStr::from_ptr(message_ptr).to_string_lossy().into_owned());
-        }
-        if !domain_ptr.is_null() {
-            trace.domain = Some(CStr::from_ptr(domain_ptr).to_string_lossy().into_owned());
-        }
-        trace.level = Some(level);
-    }
-
-    fn init_test_logger() {
-        let _ = log::set_logger(&TEST_LOGGER);
-        log::set_max_level(log::LevelFilter::Debug);
-    }
-
-    #[test]
-    #[serial]
-    fn simple_log() {
-        let trace = collect_log(|| {
-            super::glib_log(None, Level::Debug, "foobar");
-        });
-        assert_eq!(trace.domain, None);
-        assert_eq!(trace.message, Some("foobar".to_string()));
-        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_DEBUG));
-    }
-
-    #[test]
-    #[serial]
-    fn domain_log() {
-        let trace = collect_log(|| {
-            super::glib_log(Some("barbaz"), Level::Debug, "foobar");
-        });
-        assert_eq!(trace.domain, Some(String::from("barbaz")));
-        assert_eq!(trace.message, Some("foobar".to_string()));
-        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_DEBUG));
-    }
-
-
-    #[test]
-    #[serial]
-    fn simple_formatted_log() {
-        let trace = collect_log(|| {
-            super::glib_log(
-                None,
-                Level::Info,
-                &format!("this is a test {} \"{}\" %%d", 123, "abcd"),
-            );
-        });
-        assert_eq!(trace.domain, None);
-        assert_eq!(
-            trace.message,
-            Some("this is a test 123 \"abcd\" %d".to_string())
-        );
-        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_INFO));
-    }
-
-    // TODO: figure out a way to install handler for structure logs
-
-    #[test]
-    #[serial]
-    fn via_logger() {
-        let trace = collect_log(|| {
-            use log::Log;
-
-            let l = super::simple();
-            l.log(&log::Record::builder()
-                .level(Level::Error)
-                .file(Some("foo.rs"))
-                .line(Some(123))
-                .module_path(None)
-                .args(format_args!("this is a test \"{}\" {}", "abcd", 12))
-                .build());
-        });
-        assert_eq!(trace.domain, None);
-        assert_eq!(
-            trace.message,
-            Some("foo.rs:123: this is a test \"abcd\" 12".to_string())
-        );
-        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_CRITICAL));
-    }
-
-    #[test]
-    #[serial]
-    fn via_macro() {
-        static THIS_LOGGER: crate::Logger = crate::custom(crate::LoggerType::SimplePlain, None, false);
-        init_test_logger();
-        TEST_LOGGER.set_wrapped_logger(&THIS_LOGGER);
-
-        let trace = collect_log(|| {
-            warn!("foobar");
-        });
-        assert_eq!(trace.domain, None);
-        assert_eq!(trace.message, Some("foobar".to_string()));
-        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_WARNING));
-
-        TEST_LOGGER.clear_wrapped_logger();
-    }
-
-    #[test]
-    #[serial]
-    fn via_macro_domain_default() {
-        static THIS_LOGGER: crate::Logger = crate::custom(crate::LoggerType::SimplePlain, Some("barbaz"), false);
-        init_test_logger();
-        TEST_LOGGER.set_wrapped_logger(&THIS_LOGGER);
-
-        let trace = collect_log(|| {
-            warn!("foobar");
-        });
-        assert_eq!(trace.domain, Some("barbaz".to_string()));
-        assert_eq!(trace.message, Some("foobar".to_string()));
-        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_WARNING));
-
-        TEST_LOGGER.clear_wrapped_logger();
-    }
-
-    #[test]
-    #[serial]
-    fn via_macro_domain_override() {
-        static THIS_LOGGER: crate::Logger = crate::custom(crate::LoggerType::SimplePlain, Some("barbaz"), true);
-        init_test_logger();
-        TEST_LOGGER.set_wrapped_logger(&THIS_LOGGER);
-
-        let trace = collect_log(|| {
-            warn!(target: "notbarbaz", "foobar");
-        });
-        assert_eq!(trace.domain, Some("notbarbaz".to_string()));
-        assert_eq!(trace.message, Some("foobar".to_string()));
-        assert_eq!(trace.level, Some(glib_sys::G_LOG_LEVEL_WARNING));
-
-        TEST_LOGGER.clear_wrapped_logger();
-    }
+    logging::try_init(logger)
 }
