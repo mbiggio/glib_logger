@@ -22,8 +22,7 @@ redefine_log_macros = []
 serial_test = "0.4.0"
 
 [dependencies.glib-sys]
-git = "https://github.com/gtk-rs/sys"
-package = "glib-sys"
+version = "0.10.0"
 features = ["v2_64"]
 
 [[example]]
