@@ -22,8 +22,9 @@ redefine_log_macros = []
 serial_test = "0.4.0"
 
 [dependencies.glib-sys]
-version = "0.10.0"
-features = ["v2_64"]
+git = "https://github.com/mbiggio/gtk-rs"
+rev = "8d2ab0b05aa3dd17a37882ad657182778e237ff4"
+features = ["v2_44"]
 
 [[example]]
 name = "override_macro_domain"
